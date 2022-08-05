@@ -13,8 +13,7 @@
 
 #define ANALOG_JOYSTICK_X_AXIS_PIN F4
 #define ANALOG_JOYSTICK_Y_AXIS_PIN F5
-// Y軸だけ向きが逆になっていたので修正
-#define POINTING_DEVICE_INVERT_Y
+
 /*
  * Feature disable options
  *  These options are also useful to firmware size reduction.

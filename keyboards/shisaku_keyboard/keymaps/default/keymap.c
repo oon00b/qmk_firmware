@@ -1,4 +1,5 @@
 #include QMK_KEYBOARD_H
+#include "mousekey.h"
 
 enum Layers {
     DEFAULT,
@@ -34,7 +35,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
       |         |         |   ~   |   :   |   "   | Space |   <   |   >   |   ?   |         |         |
       +---------+---------+---+-------+-------+---------------+-------+-------+---+---------+---------+
                               |       |       |    RClick &   |XXXXXXX|XXXXXXX|
-                              +-------+-------\  Mouse Wheel  /-------+-------+
+                              +-------+-------\  Mouse Scroll /-------+-------+
                                                +-------------+
      */
     [MARK] = LAYOUT(
@@ -52,7 +53,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
       |         |         |  F10  |  F11  |  F12  | Home  |  End  | PgDn  | PgUp  |         |         |
       +---------+---------+---+-------+-------+---------------+-------+-------+---+---------+---------+
                               |       |       |    RClick &   |XXXXXXX|XXXXXXX|
-                              +-------+-------\  Mouse Wheel  /-------+-------+
+                              +-------+-------\  Mouse Scroll /-------+-------+
                                                +-------------+
      */
     [FUNC] = LAYOUT(
@@ -62,3 +63,76 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
                                    _______, _______, KC_BTN2,          XXXXXXX, XXXXXXX
     )
 };
+
+// レイヤーキーが押されている間は、ポインティングデバイスの操作で画面スクロールするようにする
+bool enable_scroll = false;
+
+layer_state_t layer_state_set_user(layer_state_t state)
+{
+    if(state != 0){
+        enable_scroll = true;
+    } else {
+        enable_scroll = false;
+    }
+
+    return state;
+}
+
+const uint32_t cursor_interval = 10;
+const uint32_t scroll_interval = 80;
+
+const uint8_t cursor_max_speed = 5;
+const uint8_t wheel_max_speed  = 2;
+
+const uint8_t cursor_speed_regulator = 10;
+const uint8_t wheel_speed_regulator  = 15;
+
+// from drivers/sensors/analog_joystick.c
+extern int16_t xOrigin, yOrigin;
+extern int16_t axisCoordinate(pin_t, uint16_t);
+
+int8_t my_axisToMouseComponent(pin_t pin, int16_t origin, uint8_t maxSpeed, uint8_t regulator)
+{
+    int16_t coordinate = axisCoordinate(pin, origin);
+    if (coordinate != 0) {
+        float percent = (float)coordinate / 100;
+        return percent * maxSpeed * (abs(coordinate) / regulator);
+    } else {
+        return 0;
+    }
+}
+
+void pointing_device_task(void)
+{
+    // 最後にマウスカーソルの情報を送った時間
+    static uint32_t last_cursor = 0;
+    // 最後にマウスホイールの情報を送った時間
+    static uint32_t last_scroll = 0;
+
+    report_mouse_t report = {};
+
+    if(enable_scroll) {
+        if(timer_elapsed32(last_scroll) < scroll_interval) {
+            return;
+        }
+        last_scroll = timer_read32();
+
+        report.h = my_axisToMouseComponent(ANALOG_JOYSTICK_X_AXIS_PIN, xOrigin, wheel_max_speed, wheel_speed_regulator);
+        report.v = my_axisToMouseComponent(ANALOG_JOYSTICK_Y_AXIS_PIN, yOrigin, wheel_max_speed, wheel_speed_regulator);
+    } else {
+        if(timer_elapsed32(last_cursor) < cursor_interval) {
+            return;
+        }
+        last_cursor = timer_read32();
+
+        report.x =   my_axisToMouseComponent(ANALOG_JOYSTICK_X_AXIS_PIN, xOrigin, cursor_max_speed, cursor_speed_regulator);
+        // スティックを上下に倒すと、カーソルが逆方向に動くので修正(スクロールは問題なし)
+        report.y = - my_axisToMouseComponent(ANALOG_JOYSTICK_Y_AXIS_PIN, yOrigin, cursor_max_speed, cursor_speed_regulator);
+    }
+
+    // こうしないとマウスキーのボタンが効かなくなるっぽい
+    report.buttons = mousekey_get_report().buttons;
+
+    pointing_device_set_report(report);
+    pointing_device_send();
+}
